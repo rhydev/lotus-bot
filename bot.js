@@ -21,7 +21,7 @@ const init = async () => {
   try {
     await mongoose.connect(process.env.DATABASE, { useUnifiedTopology: true, useNewUrlParser: true })
   } catch (err) {
-    console.error(err)
+    client.logger.error(err)
     process.exit(1)
   }
   const db = mongoose.connection
@@ -54,7 +54,7 @@ const init = async () => {
     })
 
     // Fetch PSO2 news
-    setInterval(await batchFetch, 60000)
+    setInterval(await batchFetch, 15000)
   })
 
   // Async batch fetch
@@ -75,6 +75,9 @@ const init = async () => {
       const body = await res.text()
       const root = parse(body)
 
+      // Log the fetch
+      client.logger.log(`Fetched ${type} news.`)
+
       // Find the newest individual news item in the given section
       const item = root.querySelector('.all-news-section-wrapper').querySelector('.news-item')
 
@@ -88,18 +91,22 @@ const init = async () => {
       const date = item.querySelector('.date').innerHTML.trim()
 
       // Check if the news is old and send Embed with fetched data
-      const news = await News.findOne({ type: type })
-      if (!news || (news && news.get('article') !== id)) {
+      let news = await News.findOne({ type: type })
+      if (!news || (news && news.get('article') !== id) || (news && !news.get('sent'))) {
         if (!news) {
           const newNews = new News({
             _id: mongoose.Types.ObjectId(),
             type,
-            article: id
+            article: id,
+            sent: false
           })
           await newNews.save()
-        } else await news.updateOne({ article: id })
+        } else if (news && news.get('article') !== id) {
+          await news.updateOne({ article: id, sent: false })
+        }
 
-        client.channels.get('169257752697372674').send(new RichEmbed()
+        const channel = client.channels.get('710366975519359027')
+        await channel.send(new RichEmbed()
           .setColor(type === 'announcements' ?
             '#0099E0' : type === 'server-info' ?
             '#00D42E' : type === 'urgent-quests' ?
@@ -110,12 +117,13 @@ const init = async () => {
           .setDescription(desc)
           .setImage(image)
           .setFooter(`${tag} | ${date}`))
-      }
 
-      // Log the fetch
-      client.logger.log(`Fetched ${type} news.`)
+        // Get news again to update sent bool
+        news = await News.findOne({ type: type })
+        await news.updateOne({ sent: true })
+      }
     } catch (err) {
-      console.error(err)
+      client.logger.error(err)
     }
   }
 
