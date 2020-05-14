@@ -4,10 +4,13 @@ Logger class for easy and aesthetically pleasing console logging
 const chalk = require('chalk')
 const moment = require('moment')
 const stripAnsi = require('strip-ansi')
-const { createWriteStream } = require('fs')
+const { createWriteStream, existsSync, mkdirSync } = require('fs')
 
 // Overload console.log to also write to log file
 let day = moment().format('YYYY-MM-DD')
+if (!existsSync('./logs')){
+  mkdirSync('./logs')
+}
 let stream = createWriteStream(`${__dirname}/logs/${day}.txt`, { flags: 'a' })
 console.log = (msg) => {
   // Write to console
