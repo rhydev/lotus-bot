@@ -71,51 +71,62 @@ const init = async () => {
       const item = root.querySelector('.all-news-section-wrapper').querySelector('.news-item')
 
       // Gather the pertinent information
-      const title = item.querySelector('.title').innerHTML.trim()
+      let title = item.querySelector('.title').innerHTML.trim()
       const article = item.querySelector('.image').outerHTML.trim()
       const id = article.slice(article.search(/ShowDetails\('/g) + 13, article.search(/\'\,/g))
       const image = article.slice(article.search(/url\(/g) + 4, article.search(/\)"></g))
-      const desc = item.querySelector('.description').innerHTML.trim()
+      let desc = item.querySelector('.description').innerHTML.trim()
       const tag = item.querySelector('.tag').innerHTML.trim()
       const date = item.querySelector('.date').innerHTML.trim()
 
-      // Check if the news is old and send embed with fetched data
-      let news = await News.findOne({ type })
-      if (!news || (news && news.get('article') !== id) || (news && !news.get('sent'))) {
-        if (!news) {
-          const newNews = new News({
-            type,
-            article: id,
-            sent: false
-          })
-          await newNews.save()
-        } else if (news && news.get('article') !== id) {
-          await news.updateOne({ article: id, sent: false })
-        }
-        
-        // Send updates to alertChannel for all guilds
-        client.guilds.map(async (guild) => {
-          const guildData = storage.get(guild.id)
-          if (guildData && guildData.alertChannel) {
-            const channel = client.channels.get(guildData.alertChannel)
-            await channel.send(new RichEmbed()
-              .setColor(type === 'announcements' ?
-                '#0099E0' : type === 'server-info' ?
-                '#00D42E' : type === 'urgent-quests' ?
-                '#E00000' : type === 'blogs' ?
-                '#FCA400' : '#FFFFFF')
-              .setTitle(title)
-              .setURL(`https://pso2.com/news/${type}/${id}`)
-              .setDescription(desc)
-              .setImage(image)
-              .setFooter(`${tag} | ${date}`))
-
-            // Get news again to update sent bool
-            news = await News.findOne({ type })
-            await news.updateOne({ sent: true })
-          }
-        })
+      // Fix HTML hex character codes in title and description
+      const htmlHexRegex = /&#(x\d+);/
+      let matches = htmlHexRegex.exec(title)
+      if (matches) {
+        matches.shift()
+        title = title.replace(/&#(x\d+);/g, String.fromCharCode(parseInt(`0${matches.shift()}`)))
       }
+      matches = htmlHexRegex.exec(desc)
+      if (matches) {
+        matches.shift()
+        desc = desc.replace(/&#(x\d+);/g, String.fromCharCode(parseInt(`0${matches.shift()}`)))
+      }
+
+      // Update news data
+      const news = await News.findOne({ type })
+      if (!news) {
+        const newNews = new News({
+          type,
+          article: id,
+          sent: false
+        })
+        await newNews.save()
+      } else if (news && news.get('article') !== id) {
+        await news.updateOne({ article: id })
+      }
+
+      // Send updates to designated alertChannel for all guilds if it has not been sent
+      client.guilds.map(async (guild) => {
+        const guildData = storage.get(guild.id)
+        if (guildData && guildData.alertChannel && !guildData.sentAlerts[type]) {
+          const channel = client.channels.get(guildData.alertChannel)
+          await channel.send(new RichEmbed()
+            .setColor(type === 'announcements' ?
+              '#0099E0' : type === 'server-info' ?
+              '#00D42E' : type === 'urgent-quests' ?
+              '#E00000' : type === 'blogs' ?
+              '#FCA400' : '#FFFFFF')
+            .setTitle(title)
+            .setURL(`https://pso2.com/news/${type}/${id}`)
+            .setDescription(desc)
+            .setImage(image)
+            .setFooter(`${tag} | ${date}`))
+
+          // Update sent fields in each guild
+          guildData.sentAlerts[type] = true
+          await storage.update(guildData.guild, 'sentAlerts', guildData.sentAlerts)
+        }
+      })
     } catch (err) {
       client.logger.error(err)
     }
@@ -131,7 +142,13 @@ const init = async () => {
         await storage.insert({
           guild: guild.id,
           prefix: client.config.prefix,
-          alertChannel: ''
+          alertChannel: '',
+          sentAlerts: {
+            announcements: false,
+            'server-info': false,
+            'urgent-quests': false,
+            blogs: false
+          }
         })
       }
     })
@@ -155,7 +172,23 @@ const init = async () => {
     setInterval(await batchFetch, 15000)
   })
 
-  // Event listener for msgs
+  // Event listener for guild join
+  client.on('guildCreate', async (guild) => {
+    // Insert new guild settings
+    await storage.insert({
+      guild: guild.id,
+      prefix: client.config.prefix,
+      alertChannel: '',
+      sentAlerts: {
+        announcements: false,
+        'server-info': false,
+        'urgent-quests': false,
+        blogs: false
+      }
+    })
+  })
+
+  // Event listener for messages
   client.on('message', msg => {
     // Ignore messages from bots
     if (msg.author.bot) return
