@@ -1,5 +1,5 @@
 const config = {
-  prefix: '!'
+  prefix: 'l-'
 }
 
 module.exports = config

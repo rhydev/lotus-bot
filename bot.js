@@ -5,7 +5,12 @@ const fetch = require('node-fetch')
 const { parse } = require('node-html-parser')
 const readdir = promisify(require('fs').readdir)
 const mongoose = require('mongoose')
+
+// Models
 const News = require('./models/news')
+const Settings = require('./models/settings')
+// Managers
+const storage = require('./managers/storage')
 
 // Env file path
 config({ path: `${__dirname}/.env` })
@@ -19,7 +24,7 @@ client.commands = new Collection()
 const init = async () => {
   // Connect to database
   try {
-    await mongoose.connect(process.env.DATABASE, { useUnifiedTopology: true, useNewUrlParser: true })
+    await mongoose.connect(process.env.MONGODB_URI, { useUnifiedTopology: true, useNewUrlParser: true })
   } catch (err) {
     client.logger.error(err)
     process.exit(1)
@@ -27,38 +32,22 @@ const init = async () => {
   const db = mongoose.connection
   db.on('error', console.error.bind(console, 'db connection error:\n'))
 
-  /* COMMANDS CURRENTLY DISABLED
   // Load commands
   const cmdFiles = await readdir('./commands')
-  client.logger.log(`Loading a total of ${cmdFiles.length} commands.`)
+  client.logger.log(`Loading a total of ${cmdFiles.length} commands...`)
   cmdFiles.forEach(file => {
     try {
       if (!file.endsWith('.js')) return
       client.logger.log(`Loading command ${file}`)
       const cmd = require(`./commands/${file}`)
       client.commands.set(cmd.help.name, cmd)
-    } catch (e) {
-      client.logger.error(`Unable to load command ${file}: ${e}`)
+    } catch (err) {
+      client.logger.error(`Unable to load command ${file}: ${err}`)
     }
-  })
-  */
-
-  // Ready event, required for bot to work
-  client.on('ready', async () => {
-    client.logger.log(`Logged in as ${client.user.tag}!`, 'ready')
-    client.user.setPresence({
-      game: {
-        name: 'for PSO2 news!',
-        type: 'WATCHING'
-      }
-    })
-
-    // Fetch PSO2 news
-    setInterval(await batchFetch, 15000)
   })
 
   // Async batch fetch
-  batchFetch = async () => {
+  const batchFetch = async () => {
     const types = ['announcements', 'server-info', 'urgent-quests', 'blogs']
     const fetches = []
     for (type of types) {
@@ -68,15 +57,15 @@ const init = async () => {
   }
 
   // Fetches PSO2 news webpage of given news type
-  crawl = async (type) => {
-    // Fetch the webpage and parse HTML
+  const crawl = async (type) => {
     try {
+      // Fetch the webpage and parse HTML
       const res = await fetch(`https://pso2.com/news/${type}?page=1`)
       const body = await res.text()
       const root = parse(body)
 
       // Log the fetch
-      client.logger.log(`Fetched ${type} news.`)
+      client.logger.log(`Fetched PSO2 ${type} news`)
 
       // Find the newest individual news item in the given section
       const item = root.querySelector('.all-news-section-wrapper').querySelector('.news-item')
@@ -90,12 +79,11 @@ const init = async () => {
       const tag = item.querySelector('.tag').innerHTML.trim()
       const date = item.querySelector('.date').innerHTML.trim()
 
-      // Check if the news is old and send Embed with fetched data
-      let news = await News.findOne({ type: type })
+      // Check if the news is old and send embed with fetched data
+      let news = await News.findOne({ type })
       if (!news || (news && news.get('article') !== id) || (news && !news.get('sent'))) {
         if (!news) {
           const newNews = new News({
-            _id: mongoose.Types.ObjectId(),
             type,
             article: id,
             sent: false
@@ -104,34 +92,77 @@ const init = async () => {
         } else if (news && news.get('article') !== id) {
           await news.updateOne({ article: id, sent: false })
         }
+        
+        // Send updates to alertChannel for all guilds
+        client.guilds.map(async (guild) => {
+          const guildData = storage.get(guild.id)
+          if (guildData && guildData.alertChannel) {
+            const channel = client.channels.get(guildData.alertChannel)
+            await channel.send(new RichEmbed()
+              .setColor(type === 'announcements' ?
+                '#0099E0' : type === 'server-info' ?
+                '#00D42E' : type === 'urgent-quests' ?
+                '#E00000' : type === 'blogs' ?
+                '#FCA400' : '#FFFFFF')
+              .setTitle(title)
+              .setURL(`https://pso2.com/news/${type}/${id}`)
+              .setDescription(desc)
+              .setImage(image)
+              .setFooter(`${tag} | ${date}`))
 
-        const channel = client.channels.get('710366975519359027')
-        await channel.send(new RichEmbed()
-          .setColor(type === 'announcements' ?
-            '#0099E0' : type === 'server-info' ?
-            '#00D42E' : type === 'urgent-quests' ?
-            '#E00000' : type === 'blogs' ?
-            '#FCA400' : '#FFFFFF')
-          .setTitle(title)
-          .setURL(`https://pso2.com/news/${type}/${id}`)
-          .setDescription(desc)
-          .setImage(image)
-          .setFooter(`${tag} | ${date}`))
-
-        // Get news again to update sent bool
-        news = await News.findOne({ type: type })
-        await news.updateOne({ sent: true })
+            // Get news again to update sent bool
+            news = await News.findOne({ type })
+            await news.updateOne({ sent: true })
+          }
+        })
       }
     } catch (err) {
       client.logger.error(err)
     }
   }
 
-  /* COMMANDS CURRENTLY DISABLED
+  // Initialize the storage manager and update storage
+  const initStorage = async () => {
+    // Initialize the storage
+    await storage.init()
+    // Insert any new guild settings
+    client.guilds.map(async (guild) => {
+      if (!storage.get(guild.id)) {
+        await storage.insert({
+          guild: guild.id,
+          prefix: client.config.prefix,
+          alertChannel: ''
+        })
+      }
+    })
+  }
+
+  // Ready event, required for bot to work
+  client.on('ready', async () => {
+    client.logger.log(`Logged in as ${client.user.tag}!`, 'ready')
+    client.user.setPresence({
+      game: {
+        name: 'for PSO2 news!',
+        type: 'WATCHING'
+      }
+    })
+
+    // Initialize the storage for each guild
+    await initStorage()
+    client.logger.log('Storage initialized')
+
+    // Fetch PSO2 news
+    setInterval(await batchFetch, 15000)
+  })
+
   // Event listener for msgs
   client.on('message', msg => {
     // Ignore messages from bots
     if (msg.author.bot) return
+    // Ignore messages in DM channels
+    if (msg.channel.type === 'dm' || msg.channel.type === 'group') return
+    // Ignore messages in channels the bot does not have send permissions
+    if (!msg.channel.permissionsFor(client.user).has('SEND_MESSAGES')) return
     // Ignore messages that do not start with the prefix or bot mention
     if (msg.content.indexOf(client.config.prefix) !== 0 && (!msg.mentions.users.first() || (msg.mentions.users.first() && msg.mentions.users.first().id !== client.user.id))) return
     if (msg.mentions.users.first() && msg.mentions.users.first().id === client.user.id) {
@@ -143,7 +174,7 @@ const init = async () => {
       // Get and run the command
       const cmd = client.commands.get(command)
       if (!cmd) return
-      cmd.run(client, db, msg, args)
+      cmd.run(client, msg, args)
 
       // Log the command
       client.logger.cmd(`${msg.author.tag} (${msg.author.id}) ran command ${cmd.help.name}`)
@@ -156,13 +187,12 @@ const init = async () => {
       // Get and run the command
       const cmd = client.commands.get(command)
       if (!cmd) return
-      cmd.run(client, db, msg, args)
+      cmd.run(client, msg, args)
 
       // Log the command
       client.logger.cmd(`${msg.author.tag} (${msg.author.id}) ran command ${cmd.help.name}`)
     }
   })
-  */
 
   // Log the bot in
   client.login(process.env.TOKEN)

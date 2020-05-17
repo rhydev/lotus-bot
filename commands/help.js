@@ -1,6 +1,6 @@
 const { RichEmbed } = require('discord.js')
 
-exports.run = (client, db, msg, args) => {
+exports.run = (client, msg, args) => {
   // Help commands
   if (!args[0] || args[0].toLowerCase() === 'all') {
     // Help header
@@ -30,7 +30,7 @@ exports.run = (client, db, msg, args) => {
     const cmd = client.commands.get(args[0])
     msg.channel.send(new RichEmbed()
       .addField(`Command: ${cmd.help.name}`, `${cmd.help.description}`)
-      .addField('❯ Category', `\`${cmd.help.category}\``)
+      .addField('❯ Category', cmd.help.category)
       .addField('❯ Usage', `\`${client.config.prefix}${cmd.help.usage.join(` ${client.config.prefix}`)}\``)
     )
   } else {
