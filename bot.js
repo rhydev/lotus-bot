@@ -97,12 +97,18 @@ const init = async () => {
       if (!news) {
         const newNews = new News({
           type,
-          article: id,
-          sent: false
+          article: id
         })
         await newNews.save()
       } else if (news && news.get('article') !== id) {
         await news.updateOne({ article: id })
+
+        // Update guild sent values
+        client.guilds.map(async (guild) => {
+          const guildData = storage.get(guild.id)
+          guildData.sentAlerts[type] = false
+          await storage.update(guildData.guild, 'sentAlerts', guildData.sentAlerts)
+        })
       }
 
       // Send updates to designated alertChannel for all guilds if it has not been sent
