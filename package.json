@@ -15,7 +15,7 @@
     "moment": "^2.24.0",
     "mongodb": "^3.5.7",
     "mongoose": "^5.9.14",
-    "node-fetch": "^2.6.0",
+    "node-fetch": "^2.6.1",
     "node-html-parser": "^1.2.16",
     "strip-ansi": "^5.2.0"
   },
