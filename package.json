@@ -14,7 +14,7 @@
     "dotenv": "^8.2.0",
     "moment": "^2.24.0",
     "mongodb": "^3.5.7",
-    "mongoose": "^5.9.14",
+    "mongoose": "^5.13.15",
     "node-fetch": "^2.6.0",
     "node-html-parser": "^1.2.16",
     "strip-ansi": "^5.2.0"
